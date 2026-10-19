@@ -23,11 +23,14 @@ import {
   FileSpreadsheet,
   Settings,
   ChevronDown,
+  Database,
+  RefreshCw,
 } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { Shipment, ShipmentStatus } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { markShipmentException } from '../services/shipmentService';
+import { seedDemoDataIfEmpty } from '../services/seedService';
 import { TrackingMap } from '../components/TrackingMap';
 import { INDONESIAN_CITIES, ZONE_BASE_RATES } from '../data/cities';
 
@@ -65,6 +68,29 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   // Tariff settings view modal
   const [showTariffSettings, setShowTariffSettings] = useState(false);
+  const [isSeeding, setIsSeeding] = useState(false);
+
+  const handleSeedDemo = async () => {
+    if (isSeeding) return;
+    const confirmAction = window.confirm(
+      'Apakah Anda ingin menginisialisasi / memperbarui akun demo, matriks tarif, dan paket contoh?'
+    );
+    if (!confirmAction) return;
+
+    setIsSeeding(true);
+    try {
+      const ok = await seedDemoDataIfEmpty(true);
+      if (ok) {
+        alert('Data demo & matriks tarif berhasil diinisialisasi ke Firestore!');
+      } else {
+        alert('Data demo sudah ada atau tidak ada perubahan.');
+      }
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Gagal inisialisasi data demo');
+    } finally {
+      setIsSeeding(false);
+    }
+  };
 
   useEffect(() => {
     try {
@@ -225,6 +251,19 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           >
             <Camera className="w-4 h-4" />
             <span>Scan QR Resi</span>
+          </button>
+          <button
+            onClick={handleSeedDemo}
+            disabled={isSeeding}
+            className="flex items-center gap-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-teal-500/30 px-3.5 py-2.5 text-xs font-semibold text-teal-300 transition cursor-pointer disabled:opacity-50"
+            title="Muat data contoh pengiriman & tarif standar"
+          >
+            {isSeeding ? (
+              <RefreshCw className="w-4 h-4 animate-spin text-teal-400" />
+            ) : (
+              <Database className="w-4 h-4 text-teal-400" />
+            )}
+            <span>{isSeeding ? 'Memproses...' : 'Seed Data Demo'}</span>
           </button>
           <button
             onClick={() => setShowTariffSettings(!showTariffSettings)}

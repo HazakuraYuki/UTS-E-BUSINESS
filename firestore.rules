@@ -1,55 +1,523 @@
 rules_version = '2';
+
+// =============================================================================
+// LogiTrack — Firestore Security Rules
+//
+// Collections
+//   users/{uid}                     profile + role (sender | courier | admin)
+//   shipments/{shipmentId}          PRIVATE shipment (sender, assigned courier, admin)
+//   shipmentSecrets/{trackingNo}    PRIVATE confirmation code (sender, admin, rules)
+//   receiptKeys/{trackingNo_code}   capability doc: get-only if you know resi + code
+//   receiptConfirmations/{trackNo}  proof written by the receiver (verified by rules)
+//   publicTracking/{trackingNo}     PUBLIC safe tracking data + public timeline
+//   pickupPool/{shipmentId}         minimal data of paid/COD unassigned shipments
+//   shipmentEvents/{eventId}        PRIVATE audit log (admin read)
+//   notifications/{notifId}         in-app notifications (owner read)
+//   tariffs/{tariffId}              public read, admin write
+//
+// The first admin is promoted manually in the Firebase Console
+// (users/{uid}.role = 'admin'). No email is hardcoded here.
+// =============================================================================
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function isSignedIn() {
-      return request.auth != null;
+    // ---------------------------------------------------------------- helpers
+    function signedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+
+    function userPath(id) { return /databases/$(database)/documents/users/$(id); }
+    function shipmentPath(id) { return /databases/$(database)/documents/shipments/$(id); }
+    function secretPath(tn) { return /databases/$(database)/documents/shipmentSecrets/$(tn); }
+    function receiptKeyPath(key) { return /databases/$(database)/documents/receiptKeys/$(key); }
+    function confirmationPath(tn) { return /databases/$(database)/documents/receiptConfirmations/$(tn); }
+    function publicPath(tn) { return /databases/$(database)/documents/publicTracking/$(tn); }
+
+    function hasProfile() { return signedIn() && exists(userPath(uid())); }
+    function myRole() { return get(userPath(uid())).data.role; }
+    function isAdmin() { return hasProfile() && myRole() == 'admin'; }
+    function isCourier() { return hasProfile() && myRole() == 'courier'; }
+    function isSender() { return hasProfile() && myRole() == 'sender'; }
+
+    function shipmentAfter(id) { return getAfter(shipmentPath(id)).data; }
+    function shipmentBefore(id) { return get(shipmentPath(id)).data; }
+    function secretAfter(tn) { return getAfter(secretPath(tn)).data; }
+
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    function onlyChanged(keys) { return changed().hasOnly(keys); }
+
+    function str(v, max) { return v is string && v.size() <= max; }
+    function nonEmpty(v, max) { return v is string && v.size() > 0 && v.size() <= max; }
+    function isTime(v) { return v is string && v.size() >= 10 && v.size() <= 40; }
+    function isGeo(g) {
+      return g is map
+        && g.keys().hasAll(['lat', 'lng'])
+        && g.keys().hasOnly(['lat', 'lng', 'cityName', 'updatedAt'])
+        && g.lat is number && g.lng is number
+        && g.lat >= -90 && g.lat <= 90 && g.lng >= -180 && g.lng <= 180;
     }
 
-    function isAdmin() {
-      return isSignedIn() && (
-        request.auth.token.email == 'harrypottermacig@gmail.com' ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
-      );
+    function trackingOk(tn) { return tn is string && tn.matches('^LGT-[0-9]{8}-[A-Z0-9]{4,8}$'); }
+    function codeOk(c) { return c is string && c.matches('^[A-Z0-9]{8,16}$'); }
+
+    function validStatus(s) {
+      return s in ['Paket Terdaftar', 'Dijemput', 'Di Gudang', 'Dalam Perjalanan',
+                   'Sedang Diantar', 'Terkirim', 'Gagal Kirim', 'Dibatalkan'];
+    }
+    function nextStatus(s) {
+      return {
+        'Paket Terdaftar': 'Dijemput',
+        'Dijemput': 'Di Gudang',
+        'Di Gudang': 'Dalam Perjalanan',
+        'Dalam Perjalanan': 'Sedang Diantar',
+        'Sedang Diantar': 'Terkirim'
+      }.get(s, 'NONE');
+    }
+    function inTransit(s) { return s in ['Dijemput', 'Di Gudang', 'Dalam Perjalanan', 'Sedang Diantar']; }
+    function isClosed(s) { return s in ['Terkirim', 'Dibatalkan', 'Gagal Kirim']; }
+    function paidOrCod(d) { return d.paymentStatus == 'Lunas' || d.paymentMethod == 'COD'; }
+
+    // A write to a side document (event / notification) must be tied to a real
+    // change of the shipment in the same batch: same timestamp + updatedAt moved.
+    function tiedToShipmentWrite(sid, ts) {
+      return shipmentAfter(sid).updatedAt == ts
+        && (!exists(shipmentPath(sid)) || shipmentBefore(sid).updatedAt != ts);
     }
 
-    // Default deny
-    match /{document=**} {
-      allow read, write: if false;
+    // Receiver flow: confirmation document is created in this very batch.
+    function receiptCreatedNow(tn) {
+      return !exists(confirmationPath(tn)) && existsAfter(confirmationPath(tn));
     }
 
-    // Users collection
+    // ------------------------------------------------------------------ users
     match /users/{userId} {
-      allow read: if true;
-      allow create, update: if true;
+      allow get: if signedIn() && (uid() == userId || isAdmin());
+      allow list: if isAdmin();
+
+      // Self-registration: only as 'sender'.
+      allow create: if signedIn() && uid() == userId
+        && request.resource.data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'phone', 'createdAt'])
+        && request.resource.data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'createdAt'])
+        && request.resource.data.uid == userId
+        && request.resource.data.role == 'sender'
+        && request.resource.data.email == request.auth.token.get('email', '')
+        && nonEmpty(request.resource.data.displayName, 100)
+        && (!('phone' in request.resource.data) || str(request.resource.data.phone, 30))
+        && isTime(request.resource.data.createdAt);
+
+      // Owner may only edit name/phone. Role/email/uid are immutable for the owner.
+      allow update: if (signedIn() && uid() == userId && !isAdmin()
+          && onlyChanged(['displayName', 'phone'])
+          && nonEmpty(request.resource.data.displayName, 100)
+          && (!('phone' in request.resource.data) || str(request.resource.data.phone, 30)))
+        || (isAdmin()
+          && request.resource.data.uid == resource.data.uid
+          && request.resource.data.role in ['sender', 'courier', 'admin']);
+
       allow delete: if isAdmin();
     }
 
-    // Shipments collection (allows public tracking and public receiver confirmation)
+    // -------------------------------------------------------------- shipments
+    function shipmentCreateKeys() {
+      return ['id', 'trackingNumber', 'senderId', 'senderName', 'senderPhone', 'senderAddress',
+              'senderCity', 'receiverName', 'receiverPhone', 'receiverAddress', 'receiverCity',
+              'receiverEmail', 'packageDescription', 'weightKg', 'lengthCm', 'widthCm', 'heightCm',
+              'chargeableWeightKg', 'serviceType', 'shippingCost', 'baseRate', 'status',
+              'paymentMethod', 'paymentStatus', 'originCoords', 'destinationCoords',
+              'currentCourierLocation', 'createdAt', 'updatedAt'];
+    }
+
+    function validSenderCreate(id) {
+      let d = request.resource.data;
+      return d.keys().hasOnly(shipmentCreateKeys())
+        && d.keys().hasAll(['id', 'trackingNumber', 'senderId', 'senderName', 'senderPhone',
+                            'senderAddress', 'senderCity', 'receiverName', 'receiverPhone',
+                            'receiverAddress', 'receiverCity', 'packageDescription', 'weightKg',
+                            'chargeableWeightKg', 'serviceType', 'shippingCost', 'status',
+                            'paymentMethod', 'paymentStatus', 'originCoords',
+                            'destinationCoords', 'createdAt', 'updatedAt'])
+        && d.id == id
+        && d.senderId == uid()
+        && trackingOk(d.trackingNumber)
+        && d.status == 'Paket Terdaftar'
+        && ((d.paymentMethod == 'COD' && d.paymentStatus == 'Bayar di Tempat')
+            || (d.paymentMethod in ['TRANSFER', 'QRIS'] && d.paymentStatus == 'Belum Bayar'))
+        && d.serviceType in ['REGULER', 'EXPRESS', 'CARGO']
+        && d.shippingCost is number && d.shippingCost > 0
+        && d.weightKg is number && d.weightKg > 0 && d.weightKg <= 1000
+        && d.chargeableWeightKg is number && d.chargeableWeightKg > 0
+        && nonEmpty(d.senderName, 100) && nonEmpty(d.senderPhone, 30) && nonEmpty(d.senderAddress, 300)
+        && nonEmpty(d.receiverName, 100) && nonEmpty(d.receiverPhone, 30) && nonEmpty(d.receiverAddress, 300)
+        && nonEmpty(d.senderCity, 80) && nonEmpty(d.receiverCity, 80)
+        && nonEmpty(d.packageDescription, 300)
+        && (!('receiverEmail' in d) || str(d.receiverEmail, 120))
+        && isGeo(d.originCoords) && isGeo(d.destinationCoords)
+        && (!('currentCourierLocation' in d) || isGeo(d.currentCourierLocation))
+        && isTime(d.createdAt) && d.updatedAt == d.createdAt
+        // Tracking number reserved atomically in the same batch.
+        && secretAfter(d.trackingNumber).shipmentId == id
+        && existsAfter(publicPath(d.trackingNumber));
+    }
+
+    // Sender: simulated payment only (Belum Bayar -> Lunas).
+    function senderPays() {
+      let b = resource.data;
+      let a = request.resource.data;
+      return signedIn() && b.senderId == uid()
+        && b.status == 'Paket Terdaftar' && b.paymentStatus == 'Belum Bayar'
+        && onlyChanged(['paymentStatus', 'paymentMethod', 'paidAt', 'updatedAt'])
+        && a.paymentStatus == 'Lunas'
+        && a.paymentMethod in ['TRANSFER', 'QRIS']
+        && isTime(a.paidAt) && a.updatedAt == a.paidAt;
+    }
+
+    // Courier claims an unassigned paid/COD shipment while marking it 'Dijemput'.
+    function courierClaims() {
+      let b = resource.data;
+      let a = request.resource.data;
+      return isCourier()
+        && b.get('assignedCourierId', null) == null
+        && b.status == 'Paket Terdaftar' && paidOrCod(b)
+        && onlyChanged(['assignedCourierId', 'assignedCourierName', 'status', 'updatedAt'])
+        && a.assignedCourierId == uid()
+        && nonEmpty(a.assignedCourierName, 100)
+        && a.status == 'Dijemput'
+        && isTime(a.updatedAt);
+    }
+
+    // Assigned courier: next status only, plus GPS / delivery proof.
+    function courierAdvances() {
+      let b = resource.data;
+      let a = request.resource.data;
+      return isCourier()
+        && b.get('assignedCourierId', null) == uid()
+        && a.status == nextStatus(b.status)
+        && onlyChanged(['status', 'updatedAt', 'currentCourierLocation', 'deliveredAt',
+                        'receiverNotes', 'paymentStatus', 'paidAt'])
+        && (a.status != 'Dijemput' || paidOrCod(b))
+        && (a.status == 'Terkirim'
+            || !changed().hasAny(['deliveredAt', 'receiverNotes', 'paymentStatus', 'paidAt']))
+        && (!changed().hasAny(['paymentStatus', 'paidAt'])
+            || (b.paymentMethod == 'COD' && a.paymentStatus == 'Lunas' && isTime(a.paidAt)))
+        && (!('deliveredAt' in changed()) || isTime(a.deliveredAt))
+        && (!('receiverNotes' in changed()) || str(a.receiverNotes, 500))
+        && (!('currentCourierLocation' in changed()) || isGeo(a.currentCourierLocation))
+        && isTime(a.updatedAt);
+    }
+
+    function courierGps() {
+      let b = resource.data;
+      let a = request.resource.data;
+      return isCourier()
+        && b.get('assignedCourierId', null) == uid()
+        && !isClosed(b.status)
+        && onlyChanged(['currentCourierLocation', 'updatedAt'])
+        && isGeo(a.currentCourierLocation)
+        && isTime(a.updatedAt);
+    }
+
+    // Receiver (may be anonymous): must have created a valid receiptConfirmation
+    // (tracking number + code verified against receiptKeys) in the same batch.
+    function receiverConfirms(id) {
+      let b = resource.data;
+      let a = request.resource.data;
+      let tn = b.trackingNumber;
+      return inTransit(b.status)
+        && a.status == 'Terkirim'
+        && onlyChanged(['status', 'deliveredAt', 'updatedAt', 'receiverNotes', 'paymentStatus', 'paidAt'])
+        && receiptCreatedNow(tn)
+        && get(receiptKeyPath(tn + '_' + getAfter(confirmationPath(tn)).data.code)).data.shipmentId == id
+        && isTime(a.updatedAt) && a.deliveredAt == a.updatedAt
+        && str(a.receiverNotes, 300)
+        && (!changed().hasAny(['paymentStatus', 'paidAt'])
+            || (b.paymentMethod == 'COD' && a.paymentStatus == 'Lunas' && a.paidAt == a.updatedAt));
+    }
+
+    function adminUpdates() {
+      let a = request.resource.data;
+      return isAdmin()
+        && !changed().hasAny(['id', 'trackingNumber', 'senderId', 'createdAt', 'confirmationCode'])
+        && validStatus(a.status)
+        && (!('assignedCourierId' in changed())
+            || get(userPath(a.assignedCourierId)).data.role in ['courier', 'admin'])
+        && (!('status' in changed()) || a.status != 'Gagal Kirim' || nonEmpty(a.get('failureReason', ''), 500))
+        && (!('status' in changed()) || a.status != 'Dibatalkan' || nonEmpty(a.get('cancelReason', ''), 500));
+    }
+
     match /shipments/{shipmentId} {
-      allow read: if true;
-      allow create: if true;
-      allow update: if true;
+      allow get, list: if signedIn() && (
+        resource.data.senderId == uid()
+        || resource.data.get('assignedCourierId', null) == uid()
+        || isAdmin());
+
+      allow create: if signedIn() && (
+        ((isSender() || isAdmin()) && validSenderCreate(shipmentId))
+        || (isAdmin()
+            && request.resource.data.id == shipmentId
+            && trackingOk(request.resource.data.trackingNumber)
+            && validStatus(request.resource.data.status)
+            && !('confirmationCode' in request.resource.data)));
+
+      allow update: if senderPays()
+        || courierClaims()
+        || courierAdvances()
+        || courierGps()
+        || adminUpdates()
+        || receiverConfirms(shipmentId);
+
       allow delete: if isAdmin();
     }
 
-    // Shipment tracking events
+    // ------------------------------------------------- confirmation code (private)
+    match /shipmentSecrets/{tn} {
+      allow get: if signedIn() && (resource.data.senderId == uid() || isAdmin());
+      allow list: if isAdmin();
+      allow create: if trackingOk(tn)
+        && request.resource.data.keys().hasOnly(['trackingNumber', 'code', 'shipmentId', 'senderId', 'createdAt'])
+        && request.resource.data.keys().hasAll(['trackingNumber', 'code', 'shipmentId', 'senderId', 'createdAt'])
+        && request.resource.data.trackingNumber == tn
+        && codeOk(request.resource.data.code)
+        && (isAdmin()
+            || (signedIn()
+                && request.resource.data.senderId == uid()
+                && shipmentAfter(request.resource.data.shipmentId).senderId == uid()
+                && shipmentAfter(request.resource.data.shipmentId).trackingNumber == tn));
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // Capability document. ID = "<trackingNumber>_<code>". Readable with get()
+    // only by someone who already knows both values; never listable.
+    match /receiptKeys/{keyId} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if request.resource.data.keys().hasOnly(['trackingNumber', 'shipmentId', 'senderId', 'isCOD'])
+        && request.resource.data.keys().hasAll(['trackingNumber', 'shipmentId', 'senderId', 'isCOD'])
+        && keyId == request.resource.data.trackingNumber + '_' + secretAfter(request.resource.data.trackingNumber).code
+        && secretAfter(request.resource.data.trackingNumber).shipmentId == request.resource.data.shipmentId
+        && secretAfter(request.resource.data.trackingNumber).senderId == request.resource.data.senderId
+        && request.resource.data.isCOD == (shipmentAfter(request.resource.data.shipmentId).paymentMethod == 'COD')
+        && (isAdmin()
+            || (signedIn()
+                && request.resource.data.senderId == uid()
+                && shipmentAfter(request.resource.data.shipmentId).senderId == uid()));
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // Written by the receiver. Code is verified against receiptKeys; shipment must
+    // move from an in-transit status to 'Terkirim' in the same batch. One per resi.
+    match /receiptConfirmations/{tn} {
+      allow get: if signedIn() && (isAdmin() || get(secretPath(tn)).data.senderId == uid());
+      allow list: if isAdmin();
+      allow create: if request.resource.data.keys().hasOnly(['trackingNumber', 'code', 'receiverName', 'confirmedAt'])
+        && request.resource.data.keys().hasAll(['trackingNumber', 'code', 'confirmedAt'])
+        && request.resource.data.trackingNumber == tn
+        && codeOk(request.resource.data.code)
+        && (!('receiverName' in request.resource.data) || str(request.resource.data.receiverName, 60))
+        && isTime(request.resource.data.confirmedAt)
+        && exists(receiptKeyPath(tn + '_' + request.resource.data.code))
+        && inTransit(shipmentBefore(get(receiptKeyPath(tn + '_' + request.resource.data.code)).data.shipmentId).status)
+        && shipmentAfter(get(receiptKeyPath(tn + '_' + request.resource.data.code)).data.shipmentId).status == 'Terkirim';
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // ------------------------------------------------------- public tracking
+    function publicKeys() {
+      return ['trackingNumber', 'status', 'senderCity', 'receiverCity', 'originCoords',
+              'destinationCoords', 'currentCourierLocation', 'estimatedDeliveryDate',
+              'distanceKm', 'serviceType', 'updatedAt', 'deliveredAt', 'timeline'];
+    }
+    function validEntry(e) {
+      return e is map
+        && e.keys().hasOnly(['status', 'title', 'description', 'location', 'timestamp'])
+        && e.keys().hasAll(['status', 'title', 'description', 'location', 'timestamp'])
+        && validStatus(e.status)
+        && nonEmpty(e.title, 120) && nonEmpty(e.description, 300)
+        && str(e.location, 100) && isTime(e.timestamp);
+    }
+    function validPublicDoc(tn) {
+      let d = request.resource.data;
+      return d.keys().hasOnly(publicKeys())
+        && d.trackingNumber == tn
+        && validStatus(d.status)
+        && d.timeline is list && d.timeline.size() >= 1 && d.timeline.size() <= 60
+        && (!('currentCourierLocation' in d) || isGeo(d.currentCourierLocation));
+    }
+    // Timeline is append-only: existing entries unchanged, at most one new entry.
+    function timelineAppendOnly() {
+      let o = resource.data.timeline;
+      let n = request.resource.data.timeline;
+      return n.size() >= o.size() && n.size() <= o.size() + 1
+        && n[0:o.size()] == o
+        && (n.size() == o.size() || validEntry(n[n.size() - 1]));
+    }
+    function linkedShipment(tn) { return shipmentAfter(secretAfter(tn).shipmentId); }
+
+    match /publicTracking/{tn} {
+      allow get: if true;
+      allow list: if false;
+
+      allow create: if trackingOk(tn) && validPublicDoc(tn) && (
+        isAdmin()
+        || (signedIn()
+            && secretAfter(tn).senderId == uid()
+            && linkedShipment(tn).senderId == uid()
+            && linkedShipment(tn).trackingNumber == tn
+            && linkedShipment(tn).senderCity == request.resource.data.senderCity
+            && linkedShipment(tn).receiverCity == request.resource.data.receiverCity
+            && linkedShipment(tn).serviceType == request.resource.data.serviceType
+            && request.resource.data.status == 'Paket Terdaftar'
+            && request.resource.data.timeline.size() == 1
+            && validEntry(request.resource.data.timeline[0])));
+
+      allow update: if validPublicDoc(tn) && (
+        isAdmin()
+        // Assigned courier: keep in sync with the private shipment.
+        || (isCourier()
+            && linkedShipment(tn).get('assignedCourierId', null) == uid()
+            && onlyChanged(['status', 'currentCourierLocation', 'updatedAt', 'deliveredAt', 'timeline'])
+            && request.resource.data.status == linkedShipment(tn).status
+            && (!('currentCourierLocation' in changed())
+                || request.resource.data.currentCourierLocation == linkedShipment(tn).currentCourierLocation)
+            && (!('deliveredAt' in changed()) || request.resource.data.status == 'Terkirim')
+            && timelineAppendOnly())
+        // Sender: only appends a timeline entry (payment simulation).
+        || (signedIn()
+            && linkedShipment(tn).senderId == uid()
+            && onlyChanged(['updatedAt', 'timeline'])
+            && request.resource.data.status == linkedShipment(tn).status
+            && timelineAppendOnly())
+        // Receiver: fixed timeline entry, only together with a verified confirmation.
+        || (receiptCreatedNow(tn)
+            && linkedShipment(tn).status == 'Terkirim'
+            && inTransit(resource.data.status)
+            && onlyChanged(['status', 'updatedAt', 'deliveredAt', 'timeline'])
+            && request.resource.data.status == 'Terkirim'
+            && request.resource.data.deliveredAt == request.resource.data.updatedAt
+            && timelineAppendOnly()
+            && request.resource.data.timeline.size() == resource.data.timeline.size() + 1
+            && request.resource.data.timeline[resource.data.timeline.size()].status == 'Terkirim'
+            && request.resource.data.timeline[resource.data.timeline.size()].title == 'Paket Berhasil Dikonfirmasi Penerima'
+            && request.resource.data.timeline[resource.data.timeline.size()].description == 'Penerima telah memverifikasi penerimaan paket secara digital melalui kode rahasia. Pengiriman ditutup otomatis.'
+            && request.resource.data.timeline[resource.data.timeline.size()].location == resource.data.receiverCity));
+
+      allow delete: if isAdmin();
+    }
+
+    // ------------------------------------------------------------ pickup pool
+    match /pickupPool/{shipmentId} {
+      allow get, list: if isCourier() || isAdmin();
+      allow create: if request.resource.data.keys().hasOnly([
+            'shipmentId', 'trackingNumber', 'senderId', 'senderCity', 'receiverCity',
+            'serviceType', 'chargeableWeightKg', 'paymentMethod', 'shippingCost',
+            'originCoords', 'destinationCoords', 'createdAt'])
+        && request.resource.data.shipmentId == shipmentId
+        && (isAdmin()
+            || (signedIn()
+                && request.resource.data.senderId == uid()
+                && shipmentAfter(shipmentId).senderId == uid()
+                && shipmentAfter(shipmentId).status == 'Paket Terdaftar'
+                && paidOrCod(shipmentAfter(shipmentId))
+                && shipmentAfter(shipmentId).get('assignedCourierId', null) == null
+                && shipmentAfter(shipmentId).trackingNumber == request.resource.data.trackingNumber
+                && shipmentAfter(shipmentId).senderCity == request.resource.data.senderCity
+                && shipmentAfter(shipmentId).receiverCity == request.resource.data.receiverCity));
+      allow update: if isAdmin();
+      allow delete: if isAdmin()
+        || (isCourier() && shipmentAfter(shipmentId).get('assignedCourierId', null) == uid());
+    }
+
+    // ------------------------------------------------- private audit events
+    function validEvent(eventId) {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['id', 'shipmentId', 'trackingNumber', 'status', 'title', 'description',
+                               'location', 'updatedByUid', 'updatedByName', 'updatedByRole', 'timestamp'])
+        && d.keys().hasAll(['id', 'shipmentId', 'trackingNumber', 'status', 'title', 'description', 'timestamp'])
+        && d.id == eventId
+        && validStatus(d.status)
+        && nonEmpty(d.title, 150) && nonEmpty(d.description, 600)
+        && (!('location' in d) || str(d.location, 120))
+        && (!('updatedByName' in d) || str(d.updatedByName, 100))
+        && (!('updatedByRole' in d) || str(d.updatedByRole, 30))
+        && isTime(d.timestamp)
+        && shipmentAfter(d.shipmentId).trackingNumber == d.trackingNumber;
+    }
+
     match /shipmentEvents/{eventId} {
-      allow read: if true;
-      allow create: if true;
+      allow get, list: if isAdmin();
+      allow create: if validEvent(eventId) && (
+        isAdmin()
+        || (tiedToShipmentWrite(request.resource.data.shipmentId, request.resource.data.timestamp) && (
+             (signedIn()
+              && request.resource.data.get('updatedByUid', '') == uid()
+              && (shipmentAfter(request.resource.data.shipmentId).senderId == uid()
+                  || shipmentAfter(request.resource.data.shipmentId).get('assignedCourierId', null) == uid()))
+             || (eventId == 'receipt_' + request.resource.data.trackingNumber
+                 && !('updatedByUid' in request.resource.data)
+                 && request.resource.data.status == 'Terkirim'
+                 && receiptCreatedNow(request.resource.data.trackingNumber)))));
       allow update, delete: if isAdmin();
     }
 
-    // In-app notifications
-    match /notifications/{notificationId} {
-      allow read, write: if true;
+    // ---------------------------------------------------------- notifications
+    function validNotification() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['id', 'userId', 'shipmentId', 'trackingNumber', 'title', 'message', 'isRead', 'createdAt'])
+        && d.keys().hasAll(['id', 'userId', 'shipmentId', 'trackingNumber', 'title', 'message', 'isRead', 'createdAt'])
+        && d.isRead == false
+        && nonEmpty(d.title, 120) && nonEmpty(d.message, 600)
+        && isTime(d.createdAt)
+        && d.userId == shipmentAfter(d.shipmentId).senderId
+        && d.trackingNumber == shipmentAfter(d.shipmentId).trackingNumber;
     }
 
-    // Tariffs
+    match /notifications/{notifId} {
+      allow get, list: if signedIn() && (resource.data.userId == uid() || isAdmin());
+
+      // Owner may only flip isRead to true.
+      allow update: if signedIn() && resource.data.userId == uid()
+        && onlyChanged(['isRead']) && request.resource.data.isRead == true;
+
+      // Created only by system flows that change the shipment in the same batch.
+      allow create: if validNotification() && request.resource.data.id == notifId && (
+        isAdmin()
+        || (tiedToShipmentWrite(request.resource.data.shipmentId, request.resource.data.createdAt) && (
+             (signedIn()
+              && (shipmentAfter(request.resource.data.shipmentId).senderId == uid()
+                  || shipmentAfter(request.resource.data.shipmentId).get('assignedCourierId', null) == uid()))
+             || (notifId == 'receipt_' + request.resource.data.trackingNumber
+                 && receiptCreatedNow(request.resource.data.trackingNumber)
+                 && request.resource.data.title == 'Paket Selesai Diterima!'
+                 && request.resource.data.message.matches(
+                      '^Selamat! Paket Anda dengan resi ' + request.resource.data.trackingNumber
+                      + ' telah berhasil diterima oleh .{1,60}\\. Transaksi otomatis ditutup\\.$')))));
+
+      allow delete: if isAdmin();
+    }
+
+    // --------------------------------------------------------------- counters
+    // Atomic sequential counter for tracking number generation (tahan klik ganda & balapan)
+    match /counters/{counterId} {
+      allow get: if signedIn();
+      allow list: if isAdmin();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['currentSeq', 'updatedAt'])
+        && request.resource.data.currentSeq is int && request.resource.data.currentSeq == 1;
+      allow update: if signedIn()
+        && onlyChanged(['currentSeq', 'updatedAt'])
+        && request.resource.data.currentSeq is int
+        && request.resource.data.currentSeq == resource.data.currentSeq + 1;
+      allow delete: if isAdmin();
+    }
+
+    // ---------------------------------------------------------------- tariffs
     match /tariffs/{tariffId} {
       allow read: if true;
       allow write: if isAdmin();
     }
+
+    // Everything else is denied by default (no matching rule = deny).
   }
 }

@@ -32,7 +32,7 @@ export interface GeoCoordinate {
 
 export interface Shipment {
   id: string;
-  trackingNumber: string; // LGT-YYYYMMDD-XXXX
+  trackingNumber: string; // LGT-YYYYMMDD-NNNN
   senderId: string;
   senderName: string;
   senderPhone: string;
@@ -52,7 +52,7 @@ export interface Shipment {
   serviceType: 'REGULER' | 'EXPRESS' | 'CARGO';
   shippingCost: number;
   baseRate: number;
-  confirmationCode: string; // 6 digits for receiver confirmation
+  confirmationCode?: string; // Private confirmation code (kept in shipmentSecrets doc)
   status: ShipmentStatus;
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
@@ -69,6 +69,60 @@ export interface Shipment {
   createdAt: string;
   updatedAt: string;
   isDemo?: boolean;
+}
+
+export interface PublicTimelineEntry {
+  status: ShipmentStatus;
+  title: string;
+  description: string;
+  location: string;
+  timestamp: string;
+}
+
+export interface PublicTracking {
+  trackingNumber: string;
+  status: ShipmentStatus;
+  senderCity: string;
+  receiverCity: string;
+  originCoords: GeoCoordinate;
+  destinationCoords: GeoCoordinate;
+  currentCourierLocation?: GeoCoordinate;
+  estimatedDeliveryDate?: string;
+  distanceKm?: number;
+  serviceType: 'REGULER' | 'EXPRESS' | 'CARGO';
+  updatedAt: string;
+  deliveredAt?: string;
+  timeline: PublicTimelineEntry[];
+}
+
+export interface PickupPoolItem {
+  shipmentId: string;
+  trackingNumber: string;
+  senderId: string;
+  senderCity: string;
+  receiverCity: string;
+  serviceType: 'REGULER' | 'EXPRESS' | 'CARGO';
+  chargeableWeightKg: number;
+  paymentMethod: PaymentMethod;
+  shippingCost: number;
+  originCoords: GeoCoordinate;
+  destinationCoords: GeoCoordinate;
+  createdAt: string;
+}
+
+export interface ShipmentSecret {
+  trackingNumber: string;
+  code: string;
+  shipmentId: string;
+  senderId: string;
+  createdAt: string;
+}
+
+export interface ReceiptKey {
+  trackingNumber: string;
+  shipmentId: string;
+  senderId: string;
+  isCOD: boolean;
 }
 
 export interface ShipmentEvent {

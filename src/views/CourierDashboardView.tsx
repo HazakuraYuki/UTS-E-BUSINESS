@@ -21,13 +21,16 @@ import {
   ChevronRight,
   DollarSign,
   UserCheck,
+  Package,
+  Sparkles,
 } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { Shipment, ShipmentStatus } from '../types';
+import { Shipment, ShipmentStatus, PickupPoolItem } from '../types';
 import { useAuth } from '../context/AuthContext';
 import {
   advanceShipmentStatus,
   updateCourierGPS,
+  claimPickupPoolItem,
   STATUS_SEQUENCE,
 } from '../services/shipmentService';
 import { TrackingMap } from '../components/TrackingMap';
@@ -43,8 +46,10 @@ export const CourierDashboardView: React.FC<CourierDashboardViewProps> = ({
 }) => {
   const { profile, user } = useAuth();
   const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [pickupItems, setPickupItems] = useState<PickupPoolItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeFilter, setActiveFilter] = useState<'semua' | 'aktif' | 'selesai'>('aktif');
+  const [activeFilter, setActiveFilter] = useState<'aktif' | 'pool' | 'selesai' | 'semua'>('aktif');
+  const [isClaiming, setIsClaiming] = useState<string | null>(null);
 
   // Selected shipment for mobile detail/action sheet
   const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(null);
@@ -62,15 +67,20 @@ export const CourierDashboardView: React.FC<CourierDashboardViewProps> = ({
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
   const courierName = profile?.displayName || 'Budi Santoso (Kurir)';
-  const courierUid = user?.uid || profile?.uid || 'courier_01';
+  const courierUid = user?.uid || profile?.uid || 'demo_user_courier_01';
 
-  // Listen to shipments
+  // Listen to shipments and pickup pool
   useEffect(() => {
+    let unsubs: (() => void)[] = [];
     try {
-      // In real or demo, fetch all active shipments or assigned ones
-      const q = query(collection(db, 'shipments'));
-      const unsubscribe = onSnapshot(
-        q,
+      // 1. Listen to shipments: if admin, all shipments; if courier, assigned to this courier
+      const qShipments =
+        profile?.role === 'admin'
+          ? query(collection(db, 'shipments'))
+          : query(collection(db, 'shipments'), where('assignedCourierId', '==', courierUid));
+
+      const unsubShipments = onSnapshot(
+        qShipments,
         (snapshot) => {
           const list: Shipment[] = snapshot.docs.map(
             (d) => ({ id: d.id, ...d.data() } as Shipment)
@@ -84,12 +94,43 @@ export const CourierDashboardView: React.FC<CourierDashboardViewProps> = ({
           setLoading(false);
         }
       );
-      return () => unsubscribe();
+      unsubs.push(unsubShipments);
+
+      // 2. Listen to pickupPool
+      const qPool = query(collection(db, 'pickupPool'));
+      const unsubPool = onSnapshot(
+        qPool,
+        (snapshot) => {
+          const poolList = snapshot.docs.map((d) => d.data() as PickupPoolItem);
+          poolList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          setPickupItems(poolList);
+        },
+        (err) => {
+          console.warn('Pickup pool listener notice:', err);
+        }
+      );
+      unsubs.push(unsubPool);
+
+      return () => unsubs.forEach((u) => u());
     } catch (e) {
       console.warn(e);
       setLoading(false);
     }
-  }, []);
+  }, [profile?.role, courierUid]);
+
+  const handleClaimPoolItem = async (item: PickupPoolItem) => {
+    if (isClaiming) return;
+    setIsClaiming(item.trackingNumber);
+    try {
+      await claimPickupPoolItem(item, courierUid, courierName);
+      alert(`Paket ${item.trackingNumber} berhasil diambil dan berstatus Dijemput.`);
+      setActiveFilter('aktif');
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Gagal mengambil paket dari pool.');
+    } finally {
+      setIsClaiming(null);
+    }
+  };
 
   // Browser Geolocation sharing with explicit user consent
   const handleShareLocation = (shp: Shipment) => {
@@ -106,6 +147,7 @@ export const CourierDashboardView: React.FC<CourierDashboardViewProps> = ({
         try {
           await updateCourierGPS(
             shp.id,
+            shp.trackingNumber,
             pos.coords.latitude,
             pos.coords.longitude,
             'Koordinat Kurir Terkini'
@@ -251,7 +293,7 @@ export const CourierDashboardView: React.FC<CourierDashboardViewProps> = ({
       )}
 
       {/* Filter Tabs */}
-      <div className="grid grid-cols-3 p-1 bg-slate-900 rounded-xl border border-slate-800 text-xs font-bold text-center">
+      <div className="grid grid-cols-2 sm:grid-cols-4 p-1 bg-slate-900 rounded-xl border border-slate-800 text-xs font-bold text-center gap-1">
         <button
           onClick={() => setActiveFilter('aktif')}
           className={`py-2.5 rounded-lg transition ${
@@ -259,6 +301,17 @@ export const CourierDashboardView: React.FC<CourierDashboardViewProps> = ({
           }`}
         >
           Tugas Aktif ({shipments.filter((s) => s.status !== 'Terkirim' && s.status !== 'Dibatalkan').length})
+        </button>
+        <button
+          onClick={() => setActiveFilter('pool')}
+          className={`py-2.5 rounded-lg transition flex items-center justify-center gap-1.5 ${
+            activeFilter === 'pool' ? 'bg-teal-500 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <span>Antrean Jemput</span>
+          <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-500/20 text-emerald-300 font-mono">
+            {pickupItems.length}
+          </span>
         </button>
         <button
           onClick={() => setActiveFilter('selesai')}
@@ -278,9 +331,74 @@ export const CourierDashboardView: React.FC<CourierDashboardViewProps> = ({
         </button>
       </div>
 
-      {/* Shipment Cards List (Touch-friendly large targets) */}
+      {/* Shipment Cards List or Pickup Pool List */}
       <div className="space-y-4">
-        {loading ? (
+        {activeFilter === 'pool' ? (
+          pickupItems.length === 0 ? (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-8 text-center text-slate-400 space-y-2">
+              <PackageCheck className="w-10 h-10 text-slate-600 mx-auto" />
+              <p className="text-sm font-bold text-white">Belum Ada Antrean Jemput Tersedia</p>
+              <p className="text-xs text-slate-500">
+                Paket yang telah dibayar atau berstatus COD akan otomatis masuk ke antrean pool ini untuk diambil kurir.
+              </p>
+            </div>
+          ) : (
+            pickupItems.map((item) => (
+              <div
+                key={item.shipmentId}
+                className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-lg space-y-3 hover:border-teal-500/40 transition"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-bold text-sm text-teal-300">
+                      {item.trackingNumber}
+                    </span>
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-bold px-2 py-0.5 rounded-full">
+                      Siap Dijemput
+                    </span>
+                  </div>
+                  <span className="text-xs font-bold text-white">
+                    Rp {item.shippingCost.toLocaleString('id-ID')}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs text-slate-300">
+                  <div>
+                    <span className="text-slate-500 block text-[10px]">Kota Penjemputan:</span>
+                    <span className="font-semibold text-white">{item.senderCity}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px]">Kota Tujuan:</span>
+                    <span className="font-semibold text-white">{item.receiverCity}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px]">Layanan:</span>
+                    <span className="font-semibold">{item.serviceType} ({item.chargeableWeightKg} Kg)</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px]">Metode Pembayaran:</span>
+                    <span className="font-semibold text-teal-400">
+                      {item.paymentMethod === 'COD' ? 'COD (Bayar di Tempat)' : 'Lunas (Transfer/QRIS)'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    onClick={() => handleClaimPoolItem(item)}
+                    disabled={isClaiming === item.trackingNumber}
+                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-600 hover:to-emerald-600 px-4 py-2.5 text-xs font-bold text-white shadow-md transition disabled:opacity-50 cursor-pointer"
+                  >
+                    <Truck className="w-4 h-4" />
+                    <span>
+                      {isClaiming === item.trackingNumber ? 'Mengambil...' : 'Ambil & Jemput Paket Ini'}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            ))
+          )
+        ) : loading ? (
           <div className="py-12 text-center text-slate-400">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-400 mx-auto mb-2" />
             <p className="text-xs">Memuat daftar tugas kurir...</p>
@@ -290,7 +408,7 @@ export const CourierDashboardView: React.FC<CourierDashboardViewProps> = ({
             <PackageCheck className="w-10 h-10 text-slate-600 mx-auto" />
             <p className="text-sm font-bold text-white">Tidak Ada Paket pada Kategori Ini</p>
             <p className="text-xs text-slate-500">
-              Paket yang didaftarkan oleh pengirim akan otomatis muncul di sini.
+              Paket yang ditugaskan atau diambil dari pool akan otomatis muncul di sini.
             </p>
           </div>
         ) : (

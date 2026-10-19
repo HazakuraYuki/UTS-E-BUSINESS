@@ -13,39 +13,71 @@ import { Shipment } from '../types';
 
 interface ReceiveConfirmViewProps {
   initialCode?: string;
+  initialTracking?: string;
   onNavigate: (tab: string, param?: string) => void;
 }
 
 export const ReceiveConfirmView: React.FC<ReceiveConfirmViewProps> = ({
   initialCode = '',
+  initialTracking = '',
   onNavigate,
 }) => {
-  const [code, setCode] = useState(initialCode);
+  // Support either separate props or combined param 'resi|code'
+  let parsedResi = initialTracking;
+  let parsedCode = initialCode;
+  if (initialCode && initialCode.includes('|')) {
+    const parts = initialCode.split('|');
+    parsedResi = parts[0];
+    parsedCode = parts[1];
+  } else if (initialCode && initialCode.startsWith('LGT-')) {
+    parsedResi = initialCode;
+    parsedCode = '';
+  }
+
+  const [trackingNumber, setTrackingNumber] = useState(parsedResi);
+  const [code, setCode] = useState(parsedCode);
   const [recipientName, setRecipientName] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successShipment, setSuccessShipment] = useState<Shipment | null>(null);
 
   useEffect(() => {
-    if (initialCode) {
+    if (initialCode && initialCode.includes('|')) {
+      const parts = initialCode.split('|');
+      setTrackingNumber(parts[0]);
+      setCode(parts[1]);
+    } else if (initialCode && initialCode.startsWith('LGT-')) {
+      setTrackingNumber(initialCode);
+    } else if (initialCode) {
       setCode(initialCode);
     }
-  }, [initialCode]);
+    if (initialTracking) {
+      setTrackingNumber(initialTracking);
+    }
+  }, [initialCode, initialTracking]);
 
   const handleConfirm = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!trackingNumber.trim()) {
+      setErrorMsg('Mohon masukkan nomor resi paket (misal: LGT-20261019-4409).');
+      return;
+    }
     if (!code.trim()) {
-      setErrorMsg('Mohon masukkan kode konfirmasi 6-digit.');
+      setErrorMsg('Mohon masukkan kode konfirmasi rahasia penerima.');
       return;
     }
 
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await confirmReceiptByCode(code.trim(), recipientName.trim());
+      const res = await confirmReceiptByCode(
+        trackingNumber.trim().toUpperCase(),
+        code.trim().toUpperCase(),
+        recipientName.trim()
+      );
       setSuccessShipment(res);
     } catch (err: unknown) {
-      let message = 'Kode konfirmasi tidak cocok atau paket tidak ditemukan.';
+      let message = 'Nomor resi atau kode konfirmasi tidak cocok, atau paket belum dalam pengantaran.';
       if (err instanceof Error) {
         try {
           const parsed = JSON.parse(err.message);
@@ -138,20 +170,34 @@ export const ReceiveConfirmView: React.FC<ReceiveConfirmViewProps> = ({
 
           <form onSubmit={handleConfirm} className="space-y-5">
             <div>
-              <label className="text-xs font-bold text-slate-300 uppercase tracking-wider block mb-2">
-                Kode Konfirmasi 6-Digit Rahasia
+              <label className="text-xs font-bold text-slate-300 uppercase tracking-wider block mb-1">
+                Nomor Resi Paket (AWB)
               </label>
               <input
                 type="text"
                 required
-                maxLength={6}
-                placeholder="6 Digit (Misal: 725184)"
+                placeholder="Contoh: LGT-20261019-4409"
+                value={trackingNumber}
+                onChange={(e) => setTrackingNumber(e.target.value.toUpperCase())}
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm font-mono text-slate-100 placeholder-slate-500 focus:outline-none focus:border-teal-500 uppercase"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-slate-300 uppercase tracking-wider block mb-2">
+                Kode Konfirmasi Rahasia Penerima
+              </label>
+              <input
+                type="text"
+                required
+                maxLength={16}
+                placeholder="Kode Konfirmasi (Misal: KODE4409OK)"
                 value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-                className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3.5 text-center text-2xl font-mono font-black tracking-widest text-teal-300 placeholder-slate-600 focus:outline-none focus:border-teal-500 shadow-inner"
+                onChange={(e) => setCode(e.target.value.toUpperCase())}
+                className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3.5 text-center text-xl sm:text-2xl font-mono font-black tracking-widest text-teal-300 placeholder-slate-600 focus:outline-none focus:border-teal-500 shadow-inner uppercase"
               />
               <p className="text-[11px] text-slate-400 mt-2">
-                * Kode ini tercantum pada resi pengirim atau diberikan saat barang tiba.
+                * Kode rahasia diberikan oleh pengirim atau tertera pada akun pengirim saat paket dipesan.
               </p>
             </div>
 
@@ -179,7 +225,7 @@ export const ReceiveConfirmView: React.FC<ReceiveConfirmViewProps> = ({
 
             <button
               type="submit"
-              disabled={loading || code.length < 5}
+              disabled={loading || code.length < 4 || !trackingNumber.trim()}
               className="w-full rounded-xl bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-600 hover:to-emerald-600 disabled:opacity-50 py-3.5 text-sm font-black text-white shadow-lg shadow-teal-500/20 transition flex items-center justify-center gap-2 cursor-pointer"
             >
               {loading ? (
@@ -195,19 +241,25 @@ export const ReceiveConfirmView: React.FC<ReceiveConfirmViewProps> = ({
 
           {/* Quick test codes from demo data */}
           <div className="mt-6 pt-4 border-t border-slate-800 text-[11px] text-slate-400">
-            <span>Kode Demo untuk Pengujian: </span>
+            <span>Uji Coba Cepat Data Demo: </span>
             <div className="mt-1.5 flex flex-wrap gap-2">
               <button
-                onClick={() => setCode('725184')}
+                onClick={() => {
+                  setTrackingNumber('LGT-20261019-4409');
+                  setCode('KODE4409OK');
+                }}
                 className="font-mono text-teal-400 hover:underline bg-slate-950 px-2 py-0.5 rounded border border-slate-800"
               >
-                725184 (Paket Sedang Jalan)
+                LGT-20261019-4409 &bull; KODE4409OK (Sedang Diantar)
               </button>
               <button
-                onClick={() => setCode('315789')}
+                onClick={() => {
+                  setTrackingNumber('LGT-20261019-2045');
+                  setCode('KODE2045OK');
+                }}
                 className="font-mono text-teal-400 hover:underline bg-slate-950 px-2 py-0.5 rounded border border-slate-800"
               >
-                315789 (Paket Sedang Diantar)
+                LGT-20261019-2045 &bull; KODE2045OK (Dalam Perjalanan)
               </button>
             </div>
           </div>

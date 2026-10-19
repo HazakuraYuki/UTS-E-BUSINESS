@@ -148,13 +148,11 @@ export const ShippingLabel: React.FC<ShippingLabelProps> = ({ shipment, onBack }
             </p>
           </div>
 
-          {/* Security confirmation PIN Box */}
-          <div className="border border-black bg-slate-50 p-2 text-center rounded min-w-[120px]">
-            <p className="text-[9px] uppercase font-bold text-slate-500">Kode Konfirmasi:</p>
-            <p className="font-mono font-black text-base text-black tracking-widest">
-              {shipment.confirmationCode}
-            </p>
-            <p className="text-[8px] text-slate-500">Tunjukkan ke kurir</p>
+          {/* Security Verification Notice (Code kept private with receiver/sender) */}
+          <div className="border border-black bg-slate-50 p-2 text-center rounded min-w-[130px]">
+            <p className="text-[9px] uppercase font-bold text-slate-700">Verifikasi Penerima</p>
+            <p className="text-[9px] text-slate-900 font-semibold mt-0.5">Kode Rahasia Digital</p>
+            <p className="text-[8px] text-slate-500 mt-0.5">Disimpan di Akun &amp; Penerima</p>
           </div>
         </div>
 

@@ -36,7 +36,7 @@ import { seedDemoDataIfEmpty } from './services/seedService';
 import { Shipment } from './types';
 
 function MainApp() {
-  const { user, profile, signOut, switchDemoPersona, isDemoUser } = useAuth();
+  const { user, profile, signOut, isDemoUser } = useAuth();
   const isOnline = useOnlineStatus();
 
   // Navigation tab: 'beranda' | 'kirim' | 'lacak' | 'terima' | 'kurir' | 'admin' | 'riwayat' | 'label' | 'bayar'
@@ -51,21 +51,37 @@ function MainApp() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showPWAInfo, setShowPWAInfo] = useState(false);
 
-  // Parse URL query parameters on initial load (e.g., ?tab=lacak&resi=...)
+  // Parse URL pathname and query parameters on initial load (e.g., /terima/:kode, ?tab=lacak&resi=...)
   useEffect(() => {
+    const pathname = window.location.pathname.replace(/^\/+|\/+$/g, '');
+    const pathParts = pathname.split('/');
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab');
     const resi = params.get('resi');
     const kode = params.get('kode');
 
-    if (tab) {
+    if (pathParts[0] === 'terima') {
+      setActiveTab('terima');
+      if (pathParts[1] && pathParts[2]) {
+        setTabParam(`${pathParts[1]}|${pathParts[2]}`);
+      } else if (pathParts[1]) {
+        setTabParam(pathParts[1]);
+      }
+    } else if (pathParts[0] === 'lacak') {
+      setActiveTab('lacak');
+      if (pathParts[1]) setTabParam(pathParts[1]);
+    } else if (pathParts[0] === 'kirim') {
+      setActiveTab('kirim');
+    } else if (pathParts[0] === 'kurir') {
+      setActiveTab('kurir');
+    } else if (pathParts[0] === 'admin') {
+      setActiveTab('admin');
+    } else if (tab) {
       setActiveTab(tab);
-      if (resi) setTabParam(resi);
-      if (kode) setTabParam(kode);
+      if (resi && kode) setTabParam(`${resi}|${kode}`);
+      else if (resi) setTabParam(resi);
+      else if (kode) setTabParam(kode);
     }
-
-    // Seed demo data once in background
-    seedDemoDataIfEmpty();
   }, []);
 
   const handleNavigate = (tab: string, param?: string) => {
@@ -144,6 +160,7 @@ function MainApp() {
             onNavigate={handleNavigate}
             onOpenPayment={handleOpenPayment}
             onOpenLabel={handleOpenLabel}
+            onOpenAuth={() => setShowAuthModal(true)}
           />
         );
       case 'lacak':

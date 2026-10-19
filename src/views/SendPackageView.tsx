@@ -28,6 +28,7 @@ interface SendPackageViewProps {
   onNavigate: (tab: string, param?: string) => void;
   onOpenPayment: (shipment: Shipment) => void;
   onOpenLabel: (shipment: Shipment) => void;
+  onOpenAuth?: () => void;
 }
 
 export const SendPackageView: React.FC<SendPackageViewProps> = ({
@@ -35,6 +36,7 @@ export const SendPackageView: React.FC<SendPackageViewProps> = ({
   onNavigate,
   onOpenPayment,
   onOpenLabel,
+  onOpenAuth,
 }) => {
   const { user, profile } = useAuth();
 
@@ -129,11 +131,18 @@ export const SendPackageView: React.FC<SendPackageViewProps> = ({
 
   const handleSubmit = async () => {
     if (isSubmitting) return; // Prevent double submission
+
+    if (!user) {
+      setErrorMsg('Untuk keamanan dan penerbitan nomor resi resmi, silakan masuk atau mendaftar sebagai Pengirim terlebih dahulu.');
+      if (onOpenAuth) onOpenAuth();
+      return;
+    }
+
     setIsSubmitting(true);
     setErrorMsg(null);
 
     try {
-      const senderUid = user?.uid || profile?.uid || 'guest_sender_' + Date.now();
+      const senderUid = user.uid;
       const res = await createAutomaticShipment({
         senderId: senderUid,
         senderName,

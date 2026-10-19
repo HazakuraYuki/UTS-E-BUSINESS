@@ -11,6 +11,7 @@ import {
   Send,
   AlertCircle,
   Sparkles,
+  Info,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { UserRole } from '../types';
@@ -28,7 +29,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   defaultTab = 'login',
   onSuccess,
 }) => {
-  const { signInWithEmail, signUpWithEmail, signInWithGoogle, switchDemoPersona } = useAuth();
+  const { signInWithEmail, signUpWithEmail, signInWithGoogle } = useAuth();
   const [tab, setTab] = useState<'login' | 'register'>(defaultTab);
 
   const [email, setEmail] = useState('');
@@ -36,6 +37,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [demoHint, setDemoHint] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   if (!isOpen) return null;
@@ -87,9 +89,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   const handleDemoSelect = (role: UserRole) => {
-    switchDemoPersona(role);
-    if (onSuccess) onSuccess();
-    onClose();
+    setTab('login');
+    setErrorMsg(null);
+    if (role === 'sender') {
+      setEmail('andi.pengirim@logitrack.id');
+      setDemoHint('Email akun Pengirim Demo (Andi Pratama) telah terisi. Masukkan kata sandi demo (bawaan: logitrack123) lalu klik Masuk.');
+    } else if (role === 'courier') {
+      setEmail('budi.kurir@logitrack.id');
+      setDemoHint('Email akun Kurir Demo (Budi Santoso) telah terisi. Masukkan kata sandi demo (bawaan: logitrack123) lalu klik Masuk.');
+    } else {
+      setEmail('admin@logitrack.id');
+      setDemoHint('Email akun Admin Demo telah terisi. Masukkan kata sandi admin Anda lalu klik Masuk.');
+    }
   };
 
   return (
@@ -97,7 +108,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       <div className="relative w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl text-slate-100 animate-in fade-in zoom-in-95 duration-150">
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition"
+          className="absolute top-4 right-4 rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition cursor-pointer"
         >
           <X className="w-5 h-5" />
         </button>
@@ -137,6 +148,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             onClick={() => {
               setTab('register');
               setErrorMsg(null);
+              setDemoHint(null);
             }}
             className={`py-2 text-xs font-bold rounded-lg transition ${
               tab === 'register' ? 'bg-teal-500 text-white shadow-sm' : 'text-slate-400 hover:text-white'
@@ -150,6 +162,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <div className="mb-4 rounded-xl bg-red-500/10 border border-red-500/30 p-3 text-xs text-red-300 flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
             <span>{errorMsg}</span>
+          </div>
+        )}
+
+        {demoHint && tab === 'login' && (
+          <div className="mb-4 rounded-xl bg-teal-500/10 border border-teal-500/30 p-3 text-xs text-teal-300 flex items-start gap-2">
+            <Info className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
+            <span>{demoHint}</span>
           </div>
         )}
 
@@ -260,13 +279,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </span>
           </div>
           <p className="text-[11px] text-slate-400 mb-3">
-            Pilih persona instan untuk mendemokan alur peran tanpa mengetik email:
+            Klik persona untuk mengisi otomatis email akun demo resmi:
           </p>
           <div className="grid grid-cols-3 gap-2">
             <button
               type="button"
               onClick={() => handleDemoSelect('sender')}
-              className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition group"
+              className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition group cursor-pointer"
             >
               <Send className="w-4 h-4 text-teal-400 mb-1 group-hover:scale-110 transition" />
               <span className="text-xs font-bold">Pengirim</span>
@@ -275,7 +294,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <button
               type="button"
               onClick={() => handleDemoSelect('courier')}
-              className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition group"
+              className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition group cursor-pointer"
             >
               <Truck className="w-4 h-4 text-emerald-400 mb-1 group-hover:scale-110 transition" />
               <span className="text-xs font-bold">Kurir</span>
@@ -284,7 +303,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <button
               type="button"
               onClick={() => handleDemoSelect('admin')}
-              className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition group"
+              className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition group cursor-pointer"
             >
               <Shield className="w-4 h-4 text-sky-400 mb-1 group-hover:scale-110 transition" />
               <span className="text-xs font-bold">Admin</span>
