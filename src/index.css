@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    @apply bg-slate-950 text-slate-100 font-sans;
+  }
+}
+
+/* Print styling for shipping labels */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #printable-label, #printable-label * {
+    visibility: visible;
+  }
+  #printable-label {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    background: white !important;
+    color: black !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
+
+/* Custom leaflet map fixes for dark theme SaaS */
+.leaflet-container {
+  font-family: inherit;
+  border-radius: 0.75rem;
+  z-index: 10;
+}
+
+.leaflet-popup-content-wrapper {
+  background: #0f172a !important;
+  color: #f1f5f9 !important;
+  border: 1px solid #334155 !important;
+  border-radius: 0.5rem !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5) !important;
+}
+
+.leaflet-popup-tip {
+  background: #0f172a !important;
+}

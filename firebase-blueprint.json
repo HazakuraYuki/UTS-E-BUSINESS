@@ -1,0 +1,126 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with role-based access",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["sender", "courier", "admin"] },
+        "phone": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["uid", "email", "displayName", "role"]
+    },
+    "Shipment": {
+      "title": "Shipment",
+      "description": "Logistics parcel delivery record",
+      "type": "object",
+      "properties": {
+        "trackingNumber": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "senderPhone": { "type": "string" },
+        "senderAddress": { "type": "string" },
+        "senderCity": { "type": "string" },
+        "receiverName": { "type": "string" },
+        "receiverPhone": { "type": "string" },
+        "receiverAddress": { "type": "string" },
+        "receiverCity": { "type": "string" },
+        "receiverEmail": { "type": "string" },
+        "packageDescription": { "type": "string" },
+        "weightKg": { "type": "number" },
+        "lengthCm": { "type": "number" },
+        "widthCm": { "type": "number" },
+        "heightCm": { "type": "number" },
+        "chargeableWeightKg": { "type": "number" },
+        "serviceType": { "type": "string" },
+        "shippingCost": { "type": "number" },
+        "baseRate": { "type": "number" },
+        "confirmationCode": { "type": "string" },
+        "status": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "paymentStatus": { "type": "string" },
+        "paidAt": { "type": "string" },
+        "assignedCourierId": { "type": "string" },
+        "assignedCourierName": { "type": "string" },
+        "cancelReason": { "type": "string" },
+        "failureReason": { "type": "string" },
+        "receiverNotes": { "type": "string" },
+        "deliveredAt": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["trackingNumber", "senderId", "senderName", "receiverName", "senderCity", "receiverCity", "status", "paymentStatus", "shippingCost"]
+    },
+    "ShipmentEvent": {
+      "title": "ShipmentEvent",
+      "description": "Historical timeline event of shipment tracking status",
+      "type": "object",
+      "properties": {
+        "shipmentId": { "type": "string" },
+        "trackingNumber": { "type": "string" },
+        "status": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "location": { "type": "string" },
+        "updatedByUid": { "type": "string" },
+        "updatedByName": { "type": "string" },
+        "updatedByRole": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["shipmentId", "trackingNumber", "status", "title", "timestamp"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "In-app notifications for sender, courier, or receiver",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "shipmentId": { "type": "string" },
+        "trackingNumber": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "isRead": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "title", "message", "createdAt"]
+    },
+    "TariffSetting": {
+      "title": "TariffSetting",
+      "description": "Shipping tariff rates per zone and city list",
+      "type": "object",
+      "properties": {
+        "basePerKg": { "type": "number" },
+        "expressMultiplier": { "type": "number" },
+        "cargoDiscountPerKg": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["basePerKg", "expressMultiplier"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile with role assignment"
+    },
+    "/shipments/{shipmentId}": {
+      "schema": "Shipment",
+      "description": "Active and completed parcels"
+    },
+    "/shipmentEvents/{eventId}": {
+      "schema": "ShipmentEvent",
+      "description": "Audit and tracking history events"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "User in-app notifications"
+    },
+    "/tariffs/{tariffId}": {
+      "schema": "TariffSetting",
+      "description": "System tariff rules and multipliers"
+    }
+  }
+}

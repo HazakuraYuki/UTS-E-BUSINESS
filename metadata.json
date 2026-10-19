@@ -1,0 +1,6 @@
+{
+  "name": "LogiTrack - E-Shipment Ekspedisi Darat",
+  "description": "Platform E-Shipment terintegrasi untuk ekspedisi darat Indonesia dengan fitur Send-Receive Automatic, pelacakan real-time, dan konfirmasi otomatis.",
+  "requestFramePermissions": ["geolocation", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
