@@ -16,6 +16,7 @@ import {
   Smartphone,
   ChevronRight,
   Send,
+  TrendingUp,
 } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LandingView } from './views/LandingView';
@@ -25,6 +26,7 @@ import { CourierDashboardView } from './views/CourierDashboardView';
 import { AdminDashboardView } from './views/AdminDashboardView';
 import { ReceiveConfirmView } from './views/ReceiveConfirmView';
 import { UserHistoryView } from './views/UserHistoryView';
+import { MarketStrategyView } from './views/MarketStrategyView';
 import { PaymentView } from './components/PaymentView';
 import { ShippingLabel } from './components/ShippingLabel';
 import { QRScannerModal } from './components/QRScannerModal';
@@ -72,6 +74,8 @@ function MainApp() {
       if (pathParts[1]) setTabParam(pathParts[1]);
     } else if (pathParts[0] === 'kirim') {
       setActiveTab('kirim');
+    } else if (pathParts[0] === 'strategi') {
+      setActiveTab('strategi');
     } else if (pathParts[0] === 'kurir') {
       setActiveTab('kurir');
     } else if (pathParts[0] === 'admin') {
@@ -201,6 +205,10 @@ function MainApp() {
             onOpenLabel={handleOpenLabel}
           />
         );
+      case 'strategi':
+        return (
+          <MarketStrategyView onNavigate={handleNavigate} />
+        );
       default:
         return (
           <LandingView
@@ -304,6 +312,18 @@ function MainApp() {
               }`}
             >
               Konfirmasi Terima
+            </button>
+
+            <button
+              onClick={() => handleNavigate('strategi')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 ${
+                activeTab === 'strategi'
+                  ? 'bg-slate-800 text-teal-400'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
+              }`}
+            >
+              <TrendingUp className="w-3.5 h-3.5 text-teal-400" />
+              <span>Strategi Pasar</span>
             </button>
 
             {/* Role specific links */}
@@ -424,6 +444,17 @@ function MainApp() {
               className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-800 text-slate-200"
             >
               Konfirmasi Terima Paket
+            </button>
+
+            <button
+              onClick={() => handleNavigate('strategi')}
+              className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-800 text-teal-300 flex items-center justify-between"
+            >
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-teal-400" />
+                <span>Strategi Pasar (UAS)</span>
+              </div>
+              <ChevronRight className="w-4 h-4 text-slate-500" />
             </button>
 
             {profile && (
