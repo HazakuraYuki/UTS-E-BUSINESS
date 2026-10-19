@@ -79,9 +79,26 @@ npm run dev
 ```
 
 ### Menjalankan Pengujian Audit Keamanan Aturan Firestore
-```bash
-npm run test:security
-```
+LogiTrack memiliki dua lapisan pengujian keamanan aturan Firestore:
+
+1. **Unit Test Nyata dengan Emulator & `@firebase/rules-unit-testing`**:
+   Menjalankan skenario otentikasi nyata terhadap Firebase Firestore Emulator (memerlukan JDK 21+):
+   ```bash
+   npm run test:rules
+   ```
+   *Skenario yang diuji:*
+   - **Tamu (Unauthenticated)**: Ditolak membaca/menulis `shipments` dan `shipmentSecrets` (get, list, create, update, delete).
+   - **Pelacakan Publik**: Tamu bisa `get` satu dokumen `publicTracking`, namun `list` seluruh koleksi ditolak (Zero PII Leakage).
+   - **Sender Role Protection**: Sender tidak bisa mengubah field `role` miliknya menjadi `admin` atau `courier` (hanya `displayName` dan `phone` yang boleh diubah).
+   - **Isolasi Antar-Pengirim**: Sender A tidak bisa membaca dokumen pengiriman milik Sender B.
+   - **Kurir & Status Valid**: Kurir yang tidak ditugaskan tidak bisa mengubah paket; kurir yang ditugaskan hanya bisa memajukan status secara berurutan (`Dijemput` &rarr; `Di Gudang` &rarr; `Dalam Perjalanan` &rarr; `Sedang Diantar`) dan dilarang melompat langsung ke `Terkirim`.
+   - **Verifikasi Kode Penerimaan**: Konfirmasi penerimaan gagal jika kode rahasia salah, dan hanya berhasil jika kode rahasia 10-karakter cocok dalam satu batch atomik.
+
+2. **Audit Statis Pola Keamanan (`security-audit.js`)**:
+   Verifikasi cepat terhadap integritas teks aturan:
+   ```bash
+   npm run test:security
+   ```
 
 ### Build Produksi & Validasi PWA
 ```bash
