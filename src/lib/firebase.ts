@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider, ReCaptchaV3Provider } from 'firebase/app-check';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
@@ -12,7 +12,7 @@ if (import.meta.env.DEV) {
 }
 
 initializeAppCheck(app, {
-  provider: new ReCaptchaV3Provider(import.meta.env.VITE_RECAPTCHA_SITE_KEY),
+  provider: new ReCaptchaEnterpriseProvider('6LdMexguAAAAAGgWFuyuYjAZrGcrIyatzg0C-aDq'),
   isTokenAutoRefreshEnabled: true,
 });
 
