@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { initializeAppCheck, ReCaptchaEnterpriseProvider, ReCaptchaV3Provider } from 'firebase/app-check';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
@@ -12,10 +12,9 @@ if (import.meta.env.DEV) {
 }
 
 initializeAppCheck(app, {
-  provider: new ReCaptchaEnterpriseProvider('6LdMexguAAAAAGgWFuyuYjAZrGcrIyatzg0C-aDq'),
+  provider: new ReCaptchaEnterpriseProvider(import.meta.env.6LdMexguAAAAAGgWFuyuYjAZrGcrIyatzg0C - aDq),
   isTokenAutoRefreshEnabled: true,
 });
-
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 
